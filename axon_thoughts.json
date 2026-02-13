@@ -1,0 +1,30 @@
+[
+  {
+    "id": "62c36635-64c0-4468-86d1-f8875400f18c",
+    "text": "i have a deadli neoon assigment tommorow",
+    "category": "idea",
+    "priority": "medium",
+    "status": "active",
+    "created_at": "2026-02-13T19:33:01.553963",
+    "updated_at": "2026-02-13T19:33:25.994724",
+    "tags": [],
+    "confidence": 0.5,
+    "is_archived": false,
+    "is_deleted": false,
+    "deleted_at": null
+  },
+  {
+    "id": "c18dbe7a-72e3-4dc1-a494-21f2a13c18d8",
+    "text": "start gym tomorrow 6am no excuses\n\nwhat if ai replaces me before i graduate\n\nbuild ai startup but also learn math deeply\n\nmom called i forgot to call back\n\nidea: ai that turns voice notes into startup plans\n\ni am wasting time scrolling\n\nmaybe move abroad after degree\n\nlearn linear algebra properly this time\n\nscared of being average\n\nbuild something small but real",
+    "category": "idea",
+    "priority": "low",
+    "status": "active",
+    "created_at": "2026-02-13T19:34:19.640056",
+    "updated_at": "2026-02-13T19:34:19.640066",
+    "tags": [],
+    "confidence": 0.5,
+    "is_archived": false,
+    "is_deleted": false,
+    "deleted_at": null
+  }
+]

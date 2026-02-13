@@ -2,13 +2,374 @@
 """
 Axon Intelligence - Production-Ready Application
 SaaS-style interface with professional design
+FIXED VERSION v2 - All code in one file, all bugs fixed
 """
 
 import streamlit as st
-from models import Category, Priority
-from storage import StorageManager
-from logic import ThoughtManager
+import json
+import os
 from datetime import datetime
+from collections import Counter, defaultdict
+from enum import Enum
+from uuid import uuid4
+from dataclasses import dataclass, asdict
+
+
+# ============================================================================
+# DATA MODELS (from models.py)
+# ============================================================================
+
+class Category(str, Enum):
+    """Thought categories"""
+    TASK = "task"
+    IDEA = "idea"
+    WORRY = "worry"
+
+
+class Priority(str, Enum):
+    """Priority levels"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+@dataclass
+class Thought:
+    """Thought data model"""
+    text: str
+    category: Category
+    priority: Priority = Priority.MEDIUM
+    completed: bool = False
+    id: str = None
+    created_at: str = None
+    updated_at: str = None
+    
+    def __post_init__(self):
+        """Initialize auto-generated fields"""
+        if self.id is None:
+            self.id = str(uuid4())
+        
+        now = datetime.now().isoformat()
+        if self.created_at is None:
+            self.created_at = now
+        if self.updated_at is None:
+            self.updated_at = now
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary"""
+        return {
+            'id': self.id,
+            'text': self.text,
+            'category': self.category.value,
+            'priority': self.priority.value,
+            'completed': self.completed,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Thought':
+        """Create from dictionary"""
+        return cls(
+            text=data['text'],
+            category=Category(data['category']),
+            priority=Priority(data['priority']),
+            completed=data.get('completed', False),
+            id=data.get('id'),
+            created_at=data.get('created_at'),
+            updated_at=data.get('updated_at')
+        )
+    
+    def mark_complete(self):
+        """Mark thought as completed"""
+        self.completed = True
+        self.updated_at = datetime.now().isoformat()
+    
+    def mark_incomplete(self):
+        """Mark thought as incomplete"""
+        self.completed = False
+        self.updated_at = datetime.now().isoformat()
+
+
+# ============================================================================
+# STORAGE MANAGER (from storage.py)
+# ============================================================================
+
+class StorageManager:
+    """Handles all data persistence"""
+    
+    def __init__(self, filename: str = "axon_thoughts.json"):
+        """Initialize storage manager"""
+        self.filename = filename
+    
+    def load(self):
+        """Load all thoughts from storage"""
+        try:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r') as f:
+                    data = json.load(f)
+                    return [Thought.from_dict(item) for item in data]
+        except Exception as e:
+            print(f"Error loading thoughts: {e}")
+        
+        return []
+    
+    def save(self, thoughts) -> bool:
+        """Save all thoughts to storage"""
+        try:
+            with open(self.filename, 'w') as f:
+                data = [thought.to_dict() for thought in thoughts]
+                json.dump(data, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving thoughts: {e}")
+            return False
+    
+    def add(self, thought) -> bool:
+        """Add a new thought"""
+        try:
+            thoughts = self.load()
+            thoughts.append(thought)
+            return self.save(thoughts)
+        except Exception as e:
+            print(f"Error adding thought: {e}")
+            return False
+    
+    def update(self, thought_id: str, thought) -> bool:
+        """Update an existing thought"""
+        try:
+            thoughts = self.load()
+            for i, t in enumerate(thoughts):
+                if t.id == thought_id:
+                    thoughts[i] = thought
+                    return self.save(thoughts)
+            return False
+        except Exception as e:
+            print(f"Error updating thought: {e}")
+            return False
+    
+    def delete(self, thought_id: str) -> bool:
+        """Delete a thought"""
+        try:
+            thoughts = self.load()
+            thoughts = [t for t in thoughts if t.id != thought_id]
+            return self.save(thoughts)
+        except Exception as e:
+            print(f"Error deleting thought: {e}")
+            return False
+    
+    def get_by_id(self, thought_id: str):
+        """Get a specific thought by ID"""
+        thoughts = self.load()
+        for t in thoughts:
+            if t.id == thought_id:
+                return t
+        return None
+    
+    def export_csv(self) -> str:
+        """Export thoughts as CSV"""
+        try:
+            thoughts = self.load()
+            
+            if not thoughts:
+                return ""
+            
+            csv_lines = ["id,text,category,priority,completed,created_at"]
+            
+            for thought in thoughts:
+                csv_lines.append(
+                    f'{thought.id},'
+                    f'"{thought.text}",'
+                    f'{thought.category.value},'
+                    f'{thought.priority.value},'
+                    f'{thought.completed},'
+                    f'{thought.created_at}'
+                )
+            
+            return '\n'.join(csv_lines)
+        
+        except Exception as e:
+            print(f"Error exporting CSV: {e}")
+            return ""
+
+
+# ============================================================================
+# THOUGHT MANAGER (from logic.py)
+# ============================================================================
+
+class ThoughtManager:
+    """Manages thought operations"""
+    
+    def __init__(self, storage):
+        """Initialize thought manager"""
+        self.storage = storage
+    
+    def create_thought(self, text: str, category: Category, 
+                      priority: Priority = Priority.MEDIUM):
+        """Create a new thought"""
+        # Validate
+        if not text or not text.strip():
+            return False, "Thought cannot be empty"
+        
+        text = text.strip()
+        
+        # Check for duplicates
+        if self._is_duplicate(text):
+            return False, "Similar thought already exists"
+        
+        if len(text) < 3:
+            return False, "Thought must be at least 3 characters"
+        
+        if len(text) > 5000:
+            return False, "Thought must be less than 5000 characters"
+        
+        # Create and save
+        thought = Thought(
+            text=text,
+            category=category,
+            priority=priority
+        )
+        
+        if self.storage.add(thought):
+            return True, f"✓ Created {category.value}"
+        
+        return False, "Failed to save thought"
+    
+    def delete_thought(self, thought_id: str):
+        """Delete a thought"""
+        if self.storage.delete(thought_id):
+            return True, "✓ Deleted"
+        return False, "Failed to delete"
+    
+    def toggle_complete(self, thought_id: str):
+        """Toggle thought completion status"""
+        thought = self.storage.get_by_id(thought_id)
+        
+        if not thought:
+            return False, "Thought not found"
+        
+        if thought.completed:
+            thought.mark_incomplete()
+        else:
+            thought.mark_complete()
+        
+        if self.storage.update(thought_id, thought):
+            status = "completed" if thought.completed else "incomplete"
+            return True, f"✓ Marked as {status}"
+        
+        return False, "Failed to update"
+    
+    def get_all(self):
+        """Get all thoughts"""
+        return self.storage.load()
+    
+    def search(self, query: str):
+        """Search thoughts by keyword"""
+        if not query or not query.strip():
+            return self.get_all()
+        
+        query_lower = query.lower().strip()
+        thoughts = self.get_all()
+        
+        return [t for t in thoughts if query_lower in t.text.lower()]
+    
+    def filter_by_category(self, category: Category):
+        """Filter thoughts by category"""
+        thoughts = self.get_all()
+        return [t for t in thoughts if t.category == category]
+    
+    def filter_by_priority(self, priority: Priority):
+        """Filter thoughts by priority"""
+        thoughts = self.get_all()
+        return [t for t in thoughts if t.priority == priority]
+    
+    def filter_by_status(self, completed: bool):
+        """Filter thoughts by completion status"""
+        thoughts = self.get_all()
+        return [t for t in thoughts if t.completed == completed]
+    
+    def sort_by_priority(self, thoughts):
+        """Sort thoughts by priority (high → medium → low)"""
+        priority_order = {
+            Priority.HIGH: 0,
+            Priority.MEDIUM: 1,
+            Priority.LOW: 2
+        }
+        
+        return sorted(thoughts, key=lambda t: priority_order.get(t.priority, 3))
+    
+    def sort_by_date(self, thoughts, newest_first: bool = True):
+        """Sort thoughts by date"""
+        return sorted(
+            thoughts,
+            key=lambda t: t.created_at,
+            reverse=newest_first
+        )
+    
+    def get_stats(self) -> dict:
+        """Get statistics about thoughts - FIXED VERSION"""
+        thoughts = self.get_all()
+        
+        if not thoughts:
+            return {
+                'total': 0,
+                'completed': 0,
+                'pending': 0,
+                'by_category': {},
+                'by_priority': {},
+                'completion_rate': 0
+            }
+        
+        by_category = {}
+        by_priority = {}
+        completed_count = 0
+        
+        for thought in thoughts:
+            # Count by category
+            cat = thought.category.value
+            by_category[cat] = by_category.get(cat, 0) + 1
+            
+            # Count by priority
+            pri = thought.priority.value
+            by_priority[pri] = by_priority.get(pri, 0) + 1
+            
+            # Count completed
+            if thought.completed:
+                completed_count += 1
+        
+        completion_rate = round((completed_count / len(thoughts)) * 100, 1) if thoughts else 0
+        
+        return {
+            'total': len(thoughts),
+            'completed': completed_count,
+            'pending': len(thoughts) - completed_count,
+            'by_category': by_category,
+            'by_priority': by_priority,
+            'completion_rate': completion_rate
+        }
+    
+    def _is_duplicate(self, text: str, threshold: float = 0.85) -> bool:
+        """Check if thought is a duplicate"""
+        text_lower = text.lower().strip()
+        thoughts = self.get_all()
+        
+        for thought in thoughts:
+            thought_lower = thought.text.lower().strip()
+            
+            # Exact match
+            if text_lower == thought_lower:
+                return True
+            
+            # Contains check
+            if len(text_lower) > 10 and len(thought_lower) > 10:
+                if text_lower in thought_lower or thought_lower in text_lower:
+                    return True
+        
+        return False
+    
+    def export_csv(self) -> str:
+        """Export all thoughts as CSV"""
+        return self.storage.export_csv()
 
 
 # ============================================================================
@@ -25,23 +386,17 @@ st.set_page_config(
 # Professional SaaS Dark Theme
 st.markdown("""
     <style>
-    /* Color Variables */
     :root {
         --primary: #2563eb;
         --primary-dark: #1e40af;
         --primary-light: #3b82f6;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --danger: #ef4444;
         --bg-primary: #ffffff;
         --bg-secondary: #f9fafb;
-        --bg-tertiary: #f3f4f6;
         --text-primary: #111827;
         --text-secondary: #6b7280;
         --border: #e5e7eb;
     }
     
-    /* Global Styles */
     * {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
     }
@@ -56,7 +411,6 @@ st.markdown("""
         border-right: 1px solid var(--border);
     }
     
-    /* Header Styling */
     .header-container {
         background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
         color: white;
@@ -80,7 +434,6 @@ st.markdown("""
         font-weight: 400;
     }
     
-    /* Card Styling */
     .card {
         background: var(--bg-primary);
         border: 1px solid var(--border);
@@ -95,16 +448,6 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
     }
     
-    /* Metric Cards */
-    .metric-card {
-        background: var(--bg-primary);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 20px;
-        text-align: center;
-    }
-    
-    /* Badge Styling */
     .badge {
         display: inline-block;
         padding: 4px 12px;
@@ -147,7 +490,6 @@ st.markdown("""
         color: #0c2d5c;
     }
     
-    /* Buttons */
     .stButton > button {
         background: var(--primary);
         color: white;
@@ -162,81 +504,6 @@ st.markdown("""
         background: var(--primary-dark);
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
     }
-    
-    /* Input Fields */
-    .stTextArea textarea, .stTextInput input, .stSelectbox select {
-        background-color: var(--bg-primary);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 10px 12px;
-        color: var(--text-primary);
-    }
-    
-    .stTextArea textarea:focus, .stTextInput input:focus, .stSelectbox select:focus {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-    }
-    
-    /* Messages */
-    .stSuccess {
-        background-color: #f0fdf4;
-        border: 1px solid #86efac;
-        color: #166534;
-    }
-    
-    .stError {
-        background-color: #fef2f2;
-        border: 1px solid #fca5a5;
-        color: #7f1d1d;
-    }
-    
-    .stInfo {
-        background-color: #f0f9ff;
-        border: 1px solid #93c5fd;
-        color: #0c4a6e;
-    }
-    
-    /* Table Styling */
-    [data-testid="stDataFrame"] {
-        border: 1px solid var(--border);
-        border-radius: 6px;
-    }
-    
-    /* Divider */
-    hr {
-        border: none;
-        border-top: 1px solid var(--border);
-        margin: 20px 0;
-    }
-    
-    /* Grid Layout */
-    .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-    }
-    
-    .grid-3 {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 20px;
-    }
-    
-    .grid-4 {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 20px;
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        .header-title {
-            font-size: 1.8rem;
-        }
-        .grid-2, .grid-3, .grid-4 {
-            grid-template-columns: 1fr;
-        }
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -244,7 +511,6 @@ st.markdown("""
 # INITIALIZATION
 # ============================================================================
 
-# Initialize managers
 if 'storage' not in st.session_state:
     st.session_state.storage = StorageManager()
 
@@ -269,7 +535,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Stats
     stats = st.session_state.manager.get_stats()
     
     col1, col2 = st.columns(2)
@@ -280,7 +545,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Export
     if st.button("📥 Export CSV", use_container_width=True):
         csv_data = st.session_state.manager.export_csv()
         if csv_data:
@@ -296,7 +560,6 @@ with st.sidebar:
 # ============================================================================
 
 if page == "🏠 Home":
-    # Header
     st.markdown("""
         <div class="header-container">
             <div class="header-title">🧠 Axon Intelligence</div>
@@ -306,7 +569,6 @@ if page == "🏠 Home":
     
     st.markdown("")
     
-    # Main intro
     col1, col2 = st.columns([1.5, 1])
     
     with col1:
@@ -319,7 +581,7 @@ if page == "🏠 Home":
         
         **Key Features:**
         - 📝 Capture thoughts instantly
-        - 🏷️ Auto-categorize (Tasks, Ideas, Worries)
+        - 🏷️ Categorize (Tasks, Ideas, Worries)
         - ⭐ Prioritize what matters
         - 📊 View analytics and insights
         - 💾 Everything saved locally
@@ -329,11 +591,9 @@ if page == "🏠 Home":
         
         col_a, col_b = st.columns(2)
         with col_a:
-            if st.button("➕ Create Your First Thought", use_container_width=True, type="primary"):
-                st.switch_page("pages/new_thought.py") if hasattr(st, 'switch_page') else None
+            st.button("➕ New Thought", use_container_width=True, type="primary")
         with col_b:
-            if st.button("📋 View All Thoughts", use_container_width=True):
-                st.switch_page("pages/all_thoughts.py") if hasattr(st, 'switch_page') else None
+            st.button("📋 View Thoughts", use_container_width=True)
     
     with col2:
         st.markdown("### Quick Stats")
@@ -342,7 +602,7 @@ if page == "🏠 Home":
         
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Thoughts", stats['total'])
+            st.metric("Total", stats['total'])
         with col2:
             st.metric("Completed", stats['completed'])
         
@@ -354,7 +614,6 @@ if page == "🏠 Home":
     
     st.divider()
     
-    # Categories breakdown
     st.markdown("### Categories")
     
     stats = st.session_state.manager.get_stats()
@@ -381,7 +640,6 @@ if page == "🏠 Home":
 # ============================================================================
 
 elif page == "➕ New Thought":
-    # Header
     st.markdown("""
         <div class="header-container">
             <div class="header-title">Add a New Thought</div>
@@ -391,7 +649,6 @@ elif page == "➕ New Thought":
     
     st.markdown("")
     
-    # Input form
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -418,7 +675,6 @@ elif page == "➕ New Thought":
     
     st.divider()
     
-    # Buttons
     col1, col2, col3 = st.columns([1, 1, 2])
     
     with col1:
@@ -444,7 +700,6 @@ elif page == "➕ New Thought":
 # ============================================================================
 
 elif page == "📋 All Thoughts":
-    # Header
     st.markdown("""
         <div class="header-container">
             <div class="header-title">Your Thoughts</div>
@@ -454,7 +709,6 @@ elif page == "📋 All Thoughts":
     
     st.markdown("")
     
-    # Filters
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -482,14 +736,11 @@ elif page == "📋 All Thoughts":
     
     st.divider()
     
-    # Get thoughts
     thoughts = st.session_state.manager.get_all()
     
-    # Apply search
     if search_query:
         thoughts = st.session_state.manager.search(search_query)
     
-    # Apply filters
     if filter_category:
         thoughts = [t for t in thoughts if t.category == filter_category]
     
@@ -501,11 +752,9 @@ elif page == "📋 All Thoughts":
     elif filter_status == "Completed":
         thoughts = [t for t in thoughts if t.completed]
     
-    # Sort
     thoughts = st.session_state.manager.sort_by_priority(thoughts)
     thoughts = st.session_state.manager.sort_by_date(thoughts, newest_first=True)
     
-    # Display
     if not thoughts:
         st.info("No thoughts found.")
     else:
@@ -516,7 +765,6 @@ elif page == "📋 All Thoughts":
             col1, col2 = st.columns([0.1, 0.9])
             
             with col1:
-                # Checkbox to complete
                 is_checked = st.checkbox(
                     "",
                     value=thought.completed,
@@ -528,14 +776,11 @@ elif page == "📋 All Thoughts":
                     st.rerun()
             
             with col2:
-                # Category emoji and badge
                 category_emoji = {'task': '✓', 'idea': '💡', 'worry': '⚠️'}
                 category_badge = f'<span class="badge badge-{thought.category.value}">{category_emoji[thought.category.value]} {thought.category.value.capitalize()}</span>'
                 
-                # Priority badge
                 priority_badge = f'<span class="badge badge-{thought.priority.value}">{thought.priority.value.capitalize()}</span>'
                 
-                # Display
                 st.markdown(f"""
                 <div class="card">
                     <div style="margin-bottom: 8px;">
@@ -549,7 +794,6 @@ elif page == "📋 All Thoughts":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Delete button
                 if st.button("🗑️ Delete", key=f"delete_{thought.id}"):
                     st.session_state.manager.delete_thought(thought.id)
                     st.success("Deleted")
@@ -560,7 +804,6 @@ elif page == "📋 All Thoughts":
 # ============================================================================
 
 elif page == "📊 Analytics":
-    # Header
     st.markdown("""
         <div class="header-container">
             <div class="header-title">Analytics</div>
@@ -572,7 +815,6 @@ elif page == "📊 Analytics":
     
     stats = st.session_state.manager.get_stats()
     
-    # Top metrics
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -586,7 +828,6 @@ elif page == "📊 Analytics":
     
     st.divider()
     
-    # Category breakdown
     col1, col2 = st.columns([1, 1])
     
     with col1:
